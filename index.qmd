@@ -35,6 +35,16 @@ theme_dash <- theme_minimal(base_size = 12) +
         legend.title = element_blank(), plot.title.position = "plot")
 
 hist_df <- totals |> transmute(date = as.Date(date), arrivals)
+
+# Phone-friendly plotly: no floating toolbar (it covered the legends on small
+# screens) and legends placed under the chart instead of on top of it
+tidy_plotly <- function(p, legend = TRUE, ...) {
+  ggplotly(p, ...) |>
+    plotly::layout(showlegend = legend,
+                   legend = list(orientation = "h", x = 0, y = -0.22, xanchor = "left", yanchor = "top"),
+                   margin = list(l = 10, r = 10, t = 30, b = 10)) |>
+    plotly::config(displayModeBar = FALSE)
+}
 ```
 
 ```{r}
@@ -92,19 +102,23 @@ p <- ggplot() +
   coord_cartesian(xlim = as.Date(c("2015-01-01", NA))) +
   labs(x = NULL, y = "Arrivals per month", colour = NULL) +
   theme_dash
-ggplotly(p) |> plotly::layout(legend = list(orientation = "h", y = 1.1))
+tidy_plotly(p)
 ```
 
 ### Model comparison {width="50%"}
 
 ```{r}
-#| title: "Three forecasts, 80% and 95% intervals (clipped at 2x the record month). Green is the headline model: it wins the 12-month hold-out test"
+#| title: "Three forecasts to 2030: naive Prophet, intervention ARIMA, and the headline post-reopening ARIMA (green), which wins the 12-month hold-out test. 80%/95% intervals, clipped at 2x the record month"
 # The naive model's intervals explode; clip all bands at 2x the record month
 # so the three panels stay readable (stated in the title)
 cap <- 2 * max(hist_df$arrivals, na.rm = TRUE)
 fc <- bind_rows(tar_read(naive_fc), tar_read(inter_fc), tar_read(recent_fc)) |>
   mutate(date = as.Date(date), model = factor(model, levels = unique(model)),
          across(c(median, lo80, hi80, lo95, hi95), ~ pmin(.x, cap)))
+short <- c("Naive Prophet" = "Naive", "Intervention ARIMA" = "Interv.",
+           "Post-reopening ARIMA" = "Headline")
+fc <- fc |> mutate(model = factor(dplyr::recode(as.character(model), !!!short),
+                                  levels = unname(short)))
 cols <- setNames(c(naive_col, inter_col, recent_col), levels(fc$model))
 p <- ggplot(fc, aes(date)) +
   geom_ribbon(aes(ymin = lo95, ymax = hi95, fill = model), alpha = 0.15) +
@@ -115,10 +129,11 @@ p <- ggplot(fc, aes(date)) +
   geom_hline(yintercept = kpis$total_2019 / 12, linetype = "dotted", colour = actual_col) +
   scale_colour_manual(values = cols) + scale_fill_manual(values = cols) +
   scale_y_continuous(labels = scales::label_number(scale = 1e-3, suffix = "k")) +
+  scale_x_date(breaks = as.Date("2025-01-01"), date_labels = "%Y") +
   facet_wrap(~model, ncol = 3) +
   labs(x = NULL, y = "Arrivals per month") +
   theme_dash + theme(legend.position = "none")
-ggplotly(p)
+tidy_plotly(p, legend = FALSE)
 ```
 
 ## Seasonality and markets {height="35%"}
@@ -127,17 +142,18 @@ ggplotly(p)
 
 ```{r}
 #| title: "Has the seasonal pattern returned? (month vs its year's average)"
-s <- tar_read(seasonal) |> mutate(month = factor(month.abb[month], levels = month.abb))
+s <- tar_read(seasonal)
 p <- ggplot(s, aes(month, index, group = period, colour = period)) +
+  scale_x_continuous(breaks = 1:12, labels = substr(month.abb, 1, 1)) +
   geom_hline(yintercept = 1, colour = "grey80") +
   geom_line(aes(linewidth = period == "2017-2019 average")) +
   scale_linewidth_manual(values = c(`TRUE` = 1.4, `FALSE` = 0.6), guide = "none") +
   scale_colour_manual(values = c("2017-2019 average" = actual_col,
                                  setNames(scales::hue_pal()(n_distinct(s$period) - 1),
                                           setdiff(unique(s$period), "2017-2019 average")))) +
-  labs(x = NULL, y = "Index (1 = average month)", colour = NULL) +
+  labs(x = NULL, y = "Index (1 = avg month)", colour = NULL) +
   theme_dash
-ggplotly(p)
+tidy_plotly(p)
 ```
 
 ### Source markets {width="50%"}
@@ -153,5 +169,5 @@ p <- ggplot(mr, aes(recovery, reorder(market, recovery),
   scale_x_continuous(labels = pct) +
   labs(x = mr$period[1], y = NULL) +
   theme_dash
-ggplotly(p, tooltip = "text")
+tidy_plotly(p, legend = FALSE, tooltip = "text")
 ```
