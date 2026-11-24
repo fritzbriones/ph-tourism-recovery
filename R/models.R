@@ -242,6 +242,9 @@ residual_checks <- function(fit) {
 
 run_causalimpact <- function(ts) {
   if (!requireNamespace("CausalImpact", quietly = TRUE)) return(NULL)
+  # CausalImpact rejects NA in the post-period: use the same log-linear
+  # fill as the intervention model for the uncollected month (Jan 2022)
+  ts <- fill_gaps_log(ts)
   y <- zoo::zoo(log(ts$arrivals), as.Date(ts$date))
   pre <- as.Date(c(min(ts$date), CLOSE_START - 1))
   post <- as.Date(c(CLOSE_START, max(ts$date)))
