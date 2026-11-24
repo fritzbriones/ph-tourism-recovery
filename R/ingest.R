@@ -24,6 +24,9 @@
 #     Up to 2021 they are inside each country of residence.
 #   - Numbers have thousands separators; " - " means zero, except in months
 #     not yet reported in a partial year, where every row is " - ".
+#   - January 2022 is 0 in every row: DOT note (2) says reporting restarted
+#     in February 2022. A month whose TOTAL is 0 is kept as NOT REPORTED
+#     (NA), not as zero visitors.
 #   - Market names change between files (e.g. "CHINA" vs "CHINA, PEOPLE'S
 #     REPUBLIC OF"); see R/markets.R.
 # ==============================================================================
@@ -81,9 +84,11 @@ read_dot_file <- function(path) {
   if (is.na(total_idx)) stop("No total row found in ", basename(path))
   total_raw <- trimws(unlist(raw[total_idx, month_cols]))
   reported <- !total_raw %in% c("-", "", NA)
+  not_collected <- reported & to_number(total_raw) == 0
 
   wide <- raw[keep, month_cols[reported], drop = FALSE]
   names(wide) <- as.character(which(reported))
+  wide[, as.character(which(not_collected))] <- NA
   wide$market <- market[keep]
   wide$annual_reported <- if (is.na(annual_col)) NA_real_ else to_number(raw[[annual_col]][keep])
 
@@ -93,7 +98,7 @@ read_dot_file <- function(path) {
       year = year,
       month = as.integer(month),
       market,
-      arrivals = to_number(arrivals),
+      arrivals = ifelse(is.na(arrivals), NA_real_, to_number(arrivals)),
       is_total = toupper(market) %in% c("TOTAL", "GRAND TOTAL"),
       is_nrf = grepl("NON-RESIDENT FILIPINO", market, ignore.case = TRUE),
       annual_reported,
@@ -113,8 +118,9 @@ monthly_total <- function(markets) {
   markets |>
     dplyr::group_by(year, month, classification) |>
     dplyr::summarise(
+      not_reported = all(is.na(arrivals)),
       total_row = if (any(is_total)) sum(arrivals[is_total]) else NA_real_,
-      market_sum = sum(arrivals[!is_total], na.rm = TRUE),
+      market_sum = if (not_reported) NA_real_ else sum(arrivals[!is_total], na.rm = TRUE),
       nrf = sum(arrivals[is_nrf], na.rm = TRUE),
       .groups = "drop"
     ) |>

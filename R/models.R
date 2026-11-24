@@ -98,7 +98,7 @@ recovery_gap <- function(cf_paths, ts) {
   per_rep <- cf_paths |>
     dplyr::inner_join(actual, by = "date") |>
     dplyr::group_by(rep) |>
-    dplyr::summarise(deficit = sum(sim - arrivals), .groups = "drop")
+    dplyr::summarise(deficit = sum(sim - arrivals, na.rm = TRUE), .groups = "drop")
   tibble::tibble(
     from = format(CLOSE_START), to = format(max(ts$date)),
     deficit_median = stats::median(per_rep$deficit),

@@ -21,7 +21,7 @@ validate_dot <- function(markets, totals, tolerance = 0.005) {
   annual <- markets |>
     dplyr::filter(is_total, !is.na(annual_reported)) |>
     dplyr::group_by(year) |>
-    dplyr::summarise(sum_months = sum(arrivals), reported = dplyr::first(annual_reported),
+    dplyr::summarise(sum_months = sum(arrivals, na.rm = TRUE), reported = dplyr::first(annual_reported),
                      .groups = "drop") |>
     dplyr::filter(sum_months != reported)
 
@@ -31,6 +31,8 @@ validate_dot <- function(markets, totals, tolerance = 0.005) {
     "last month", format(max(totals$date)), TRUE,
     "months in series", as.character(nrow(totals)), TRUE,
     "missing months", if (length(missing)) paste(missing, collapse = "; ") else "none", length(missing) == 0,
+    "months DOT did not collect (kept as NA)",
+      if (any(totals$not_reported)) paste(format(totals$date[totals$not_reported]), collapse = "; ") else "none", TRUE,
     "duplicate year-month-market rows", as.character(nrow(dup)), nrow(dup) == 0,
     "negative values", as.character(nrow(neg)), nrow(neg) == 0,
     "months where total row differs from sum of markets by > 0.5%",
