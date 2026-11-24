@@ -140,7 +140,7 @@ bind_rows(`Post-reopening ARIMA (headline)` = tar_read(crossing),
 #| fig-height: 3.5
 bsts_ci <- tar_read(causal)
 if (is.null(bsts_ci)) {
-  cat("CausalImpact is not installed in this environment, so the cross-check was skipped.")
+  cat("The CausalImpact cross-check did not run in this build (package not installed or the fit failed; see the build log).")
 } else ggplot(bsts_ci |> mutate(date = as.Date(date)), aes(date)) +
   geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = "grey80") +
   geom_line(aes(y = counterfactual), linetype = "dashed") +

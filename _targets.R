@@ -67,7 +67,11 @@ list(
   tar_target(recent_paths, model_paths(recent_fit, arrivals_ts)),
   tar_target(recent_resid, residual_checks(recent_fit)),
   tar_target(holdout, holdout_accuracy(arrivals_ts)),
-  tar_target(causal, run_causalimpact(arrivals_ts)),
+  # A cross-check: if it fails, report it on the methods page instead of
+  # stopping the whole build
+  tar_target(causal, tryCatch(run_causalimpact(arrivals_ts), error = function(e) {
+    warning("CausalImpact failed: ", conditionMessage(e)); NULL
+  })),
 
   # ---- Recovery metrics ------------------------------------------------------
   tar_target(kpis, recovery_kpis(totals)),
