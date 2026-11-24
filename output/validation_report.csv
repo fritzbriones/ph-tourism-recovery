@@ -1,0 +1,9 @@
+check,result,pass
+first month,2010 Jan,TRUE
+last month,2026 Aug,TRUE
+months in series,200,TRUE
+missing months,none,TRUE
+duplicate year-month-market rows,0,TRUE
+negative values,0,TRUE
+months where total row differs from sum of markets by > 0.5%,none,TRUE
+classification switch (residence -> citizenship),2022-01,TRUE

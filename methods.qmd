@@ -1,0 +1,128 @@
+---
+title: "Methods and diagnostics"
+format:
+  html:
+    toc: true
+    df-print: kable
+---
+
+```{r}
+#| label: setup
+library(targets)
+library(dplyr)
+library(tsibble)
+library(ggplot2)
+placeholder <- tar_read(using_placeholder)
+num <- function(x, d = 3) format(round(x, d), big.mark = ",")
+```
+
+```{r}
+#| output: asis
+if (placeholder) cat('::: {.callout-warning}\n**Placeholder data.** Every number on this page comes from a SYNTHETIC test series, not DOT data.\n:::\n')
+```
+
+## Data
+
+- **Source:** Department of Tourism, [Philippine Tourism Data Dashboard](https://www.tourism.gov.ph/dot/data/), yearly files of monthly visitor arrivals (CC BY 4.0).
+- **Break in classification:** the 2010–2021 files count arrivals by **country of residence**; the 2022 onward files count them by **country of citizenship**. The national monthly total is comparable across the break, so the models use only the total. The source market panel compares 2019 (residence) with the latest year (citizenship), so differences there are partly definitional. Markets with many overseas Filipinos or long-term residents are the most affected.
+- **Pipeline:** `targets` reads every file in `data/raw/`, binds them, validates them, and writes `data/dot_arrivals_clean.csv` (national monthly total) and `data/dot_arrivals_by_market.csv`.
+
+### Validation checks
+
+```{r}
+tar_read(validation)
+```
+
+## Counterfactual: what if COVID-19 had not happened?
+
+The counterfactual model is trained only on January 2010 – February 2020 and projected forward. To pick it, three models were compared with rolling-origin cross-validation (training window grows one year at a time, 12-month-ahead forecasts):
+
+```{r}
+tar_read(cv_pre) |> mutate(across(where(is.numeric), ~ round(.x, 3)))
+```
+
+The model with the lowest MASE (excluding the seasonal naive benchmark) is used: **`r attr(tar_read(cf_fit), "chosen")`** on log arrivals. The dashboard's recovery gap is the sum of (counterfactual − actual) from March 2020 to the latest month, computed across `r tar_read(cf_paths)$rep |> n_distinct()` simulated counterfactual paths, so it has an uncertainty interval.
+
+## Intervention model (ARIMAX)
+
+A regression with ARIMA errors on log arrivals, with four intervention terms:
+
+| Term | Definition | Captures |
+|---|---|---|
+| `mar2020` | 1 in March 2020 | Partial first month of lockdown |
+| `closed` | 1 from April 2020 to January 2022 | Border closure |
+| `post` | 1 from February 2022 onward | Any lasting level shift after reopening |
+| `gap_decay` | exp(−months since Feb 2022 / τ) from February 2022 | Post-reopening gap that shrinks over time |
+
+All four are known for future months, so forecasting needs no guessed inputs. The decay speed τ was chosen by AICc:
+
+```{r}
+attr(tar_read(inter_fit), "tau_table") |> mutate(AICc = round(AICc, 1),
+  chosen = tau_months == attr(tar_read(inter_fit), "tau"))
+```
+
+```{r}
+#| class-output: model-report
+cat(tar_read(inter_resid)$report, sep = "\n")
+```
+
+### Hold-out test: last 12 months
+
+Both forecasting models were refit without the last 12 months and scored on them:
+
+```{r}
+tar_read(holdout) |> mutate(across(where(is.numeric), ~ round(.x, 3)))
+```
+
+### Residual diagnostics
+
+```{r}
+lb <- tar_read(inter_resid)$ljung_box
+```
+
+Ljung–Box test on the innovation residuals (24 lags): statistic `r num(lb$lb_stat, 1)`, p-value `r format.pval(lb$lb_pvalue, digits = 2)`. A p-value above 0.05 means no evidence of leftover autocorrelation.
+
+```{r}
+#| fig-height: 3.5
+aug <- tar_read(inter_resid)$augment
+acf_df <- with(stats::acf(aug$.innov, lag.max = 36, plot = FALSE, na.action = na.pass),
+               tibble(lag = lag[-1], acf = acf[-1]))
+conf <- 1.96 / sqrt(sum(!is.na(aug$.innov)))
+ggplot(acf_df, aes(lag, acf)) + geom_hline(yintercept = 0) +
+  geom_hline(yintercept = c(-conf, conf), linetype = "dashed", colour = "#2563eb") +
+  geom_segment(aes(xend = lag, yend = 0)) +
+  labs(x = "Lag (months)", y = "ACF", title = "Autocorrelation of residuals") + theme_minimal()
+```
+
+## When will arrivals pass 2019?
+
+Cumulative arrivals since 2020 can never catch up with the no-COVID path, so the target is the **rolling 12-month total** passing the **2019 calendar-year total** (`r num(tar_read(crossing)$target_2019_total, 0)`). This is checked on each of the simulated future paths of the intervention model:
+
+```{r}
+tar_read(crossing)
+```
+
+## Cross-check: Bayesian structural time series
+
+```{r}
+#| fig-height: 3.5
+bsts_ci <- tar_read(causal)
+if (is.null(bsts_ci)) {
+  cat("CausalImpact is not installed in this environment, so the cross-check was skipped.")
+} else ggplot(bsts_ci |> mutate(date = as.Date(date)), aes(date)) +
+  geom_ribbon(aes(ymin = lo95, ymax = hi95), fill = "grey80") +
+  geom_line(aes(y = counterfactual), linetype = "dashed") +
+  geom_line(aes(y = actual)) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  labs(x = NULL, y = "Arrivals per month",
+       title = "CausalImpact counterfactual (local trend + 12-month seasonality, log scale model)") +
+  theme_minimal()
+```
+
+`CausalImpact` fits a Bayesian structural time series to the pre-COVID period and predicts the post-period. It's an independent check on the fable counterfactual; if the two disagree a lot, the gap estimate is fragile.
+
+## Limitations
+
+- No covariates: the counterfactual assumes the 2010–2019 trend would have continued. Exchange rates, airline capacity, the Boracay closure (April–October 2018) and visa policy aren't modelled.
+- The classification change in 2022 affects source market comparisons, not the national total.
+- Forecast intervals assume the post-reopening pattern continues; a new shock would break them.

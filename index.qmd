@@ -1,0 +1,156 @@
+---
+title: "Has Philippine tourism recovered?"
+format:
+  dashboard:
+    orientation: rows
+    nav-buttons:
+      - icon: github
+        href: https://github.com/fritzbriones/ph-tourism-recovery
+      - text: Methods
+        href: methods.html
+---
+
+```{r}
+#| label: setup
+library(targets)
+library(ggplot2)
+library(plotly)
+library(dplyr)
+library(tsibble)
+
+placeholder <- tar_read(using_placeholder)
+kpis <- tar_read(kpis)
+crossing <- tar_read(crossing)
+gap <- tar_read(gap)
+totals <- tar_read(totals)
+
+comma <- scales::label_comma()
+millions <- scales::label_number(accuracy = 0.01, scale = 1e-6, suffix = "M")
+pct <- scales::label_percent(accuracy = 1)
+
+actual_col <- "#1f2937"; cf_col <- "#9ca3af"; naive_col <- "#d97706"; inter_col <- "#2563eb"
+
+theme_dash <- theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank(), legend.position = "top",
+        legend.title = element_blank(), plot.title.position = "plot")
+
+hist_df <- totals |> transmute(date = as.Date(date), arrivals)
+```
+
+```{r}
+#| label: banner
+#| output: asis
+if (placeholder) {
+  cat('::: {.callout-warning}\n**Placeholder data.** These charts use a SYNTHETIC series so the pipeline can be tested. They are not Department of Tourism figures. Add the DOT yearly files to `data/raw/` and rerun `targets::tar_make()`.\n:::\n')
+} else {
+  cat(sprintf('Source: Department of Tourism, Philippine Tourism Data Dashboard (CC BY 4.0). Monthly visitor arrivals, January 2010 to %s.\n', kpis$latest_month))
+}
+```
+
+## KPIs {height="20%"}
+
+```{r}
+#| content: valuebox
+#| title: !expr 'paste0("Arrivals, Jan-", sub("^([0-9]{4}) (.*)$", "\\2 \\1", kpis$latest_month))'
+list(icon = "airplane", color = "primary", value = millions(kpis$ytd))
+```
+
+```{r}
+#| content: valuebox
+#| title: "Year to date vs same months of 2019"
+list(icon = "percent", color = if (kpis$ytd_pct_2019 >= 1) "success" else "warning",
+     value = pct(kpis$ytd_pct_2019))
+```
+
+```{r}
+#| content: valuebox
+#| title: "Last 12 months vs full-year 2019"
+list(icon = "calendar3", color = if (kpis$rolling12_pct_2019 >= 1) "success" else "warning",
+     value = pct(kpis$rolling12_pct_2019))
+```
+
+```{r}
+#| content: valuebox
+#| title: "Forecast: 12-month total passes 2019"
+value <- if (crossing$already_passed) "Already passed" else
+  if (is.na(crossing$median_month)) paste(">", sub(" .*", "", crossing$horizon)) else
+  crossing$median_month
+list(icon = "graph-up-arrow", color = "info", value = value)
+```
+
+## Gap and models {height="45%"}
+
+### Recovery gap {width="50%"}
+
+```{r}
+#| title: !expr 'sprintf("Actual vs no-COVID counterfactual. Visitors lost since Mar 2020: about %s (95%% interval %s to %s)", millions(gap$deficit_median), millions(gap$deficit_lo95), millions(gap$deficit_hi95))'
+cf <- tar_read(cf_summary) |> mutate(date = as.Date(date))
+p <- ggplot() +
+  geom_ribbon(data = cf, aes(as.Date(date), ymin = lo95, ymax = hi95), fill = cf_col, alpha = 0.25) +
+  geom_line(data = cf, aes(date, median, colour = "Counterfactual (no COVID)"), linetype = "dashed") +
+  geom_line(data = hist_df, aes(date, arrivals, colour = "Actual")) +
+  scale_colour_manual(values = c("Actual" = actual_col, "Counterfactual (no COVID)" = cf_col)) +
+  scale_y_continuous(labels = scales::label_number(scale = 1e-3, suffix = "k")) +
+  coord_cartesian(xlim = as.Date(c("2015-01-01", NA))) +
+  labs(x = NULL, y = "Arrivals per month", colour = NULL) +
+  theme_dash
+ggplotly(p) |> plotly::layout(legend = list(orientation = "h", y = 1.1))
+```
+
+### Model comparison {width="50%"}
+
+```{r}
+#| title: "Forecasts: naive model vs intervention model (80% and 95% intervals)"
+fc <- bind_rows(tar_read(naive_fc), tar_read(inter_fc)) |> mutate(date = as.Date(date))
+cols <- setNames(c(naive_col, inter_col), unique(fc$model))
+p <- ggplot(fc, aes(date)) +
+  geom_ribbon(aes(ymin = lo95, ymax = hi95, fill = model), alpha = 0.15) +
+  geom_ribbon(aes(ymin = lo80, ymax = hi80, fill = model), alpha = 0.25) +
+  geom_line(aes(y = median, colour = model)) +
+  geom_line(data = hist_df |> filter(date >= as.Date("2017-01-01")),
+            aes(date, arrivals), colour = actual_col) +
+  geom_hline(yintercept = kpis$total_2019 / 12, linetype = "dotted", colour = actual_col) +
+  scale_colour_manual(values = cols) + scale_fill_manual(values = cols) +
+  scale_y_continuous(labels = scales::label_number(scale = 1e-3, suffix = "k")) +
+  facet_wrap(~model, ncol = 2) +
+  # The naive model's intervals explode; cap the axis so both panels stay readable
+  coord_cartesian(ylim = c(0, 2 * max(hist_df$arrivals))) +
+  labs(x = NULL, y = "Arrivals per month") +
+  theme_dash + theme(legend.position = "none")
+ggplotly(p)
+```
+
+## Seasonality and markets {height="35%"}
+
+### Seasonality {width="50%"}
+
+```{r}
+#| title: "Has the seasonal pattern returned? (month vs its year's average)"
+s <- tar_read(seasonal) |> mutate(month = factor(month.abb[month], levels = month.abb))
+p <- ggplot(s, aes(month, index, group = period, colour = period)) +
+  geom_hline(yintercept = 1, colour = "grey80") +
+  geom_line(aes(linewidth = period == "2017-2019 average")) +
+  scale_linewidth_manual(values = c(`TRUE` = 1.4, `FALSE` = 0.6), guide = "none") +
+  scale_colour_manual(values = c("2017-2019 average" = actual_col,
+                                 setNames(scales::hue_pal()(n_distinct(s$period) - 1),
+                                          setdiff(unique(s$period), "2017-2019 average")))) +
+  labs(x = NULL, y = "Index (1 = average month)", colour = NULL) +
+  theme_dash
+ggplotly(p)
+```
+
+### Source markets {width="50%"}
+
+```{r}
+#| title: "Top 10 markets of 2019: arrivals as a share of 2019 (2019 by residence, 2022+ by citizenship)"
+mr <- tar_read(market_rec)
+p <- ggplot(mr, aes(recovery, reorder(market, recovery),
+                    text = paste0(market, ": ", comma(latest), " vs ", comma(base), " (", pct(recovery), ")"))) +
+  geom_col(aes(fill = recovery >= 1), width = 0.7) +
+  geom_vline(xintercept = 1, linetype = "dashed") +
+  scale_fill_manual(values = c(`TRUE` = "#059669", `FALSE` = naive_col), guide = "none") +
+  scale_x_continuous(labels = pct) +
+  labs(x = mr$period[1], y = NULL) +
+  theme_dash
+ggplotly(p, tooltip = "text")
+```

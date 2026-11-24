@@ -1,0 +1,15 @@
+project:
+  type: website
+  output-dir: _site
+  render:
+    - index.qmd
+    - methods.qmd
+
+website:
+  title: "Philippine Tourism Recovery"
+  site-url: "https://fritzbriones.github.io/ph-tourism-recovery/"
+
+execute:
+  echo: false
+  warning: false
+  message: false

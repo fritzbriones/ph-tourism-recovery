@@ -1,0 +1,34 @@
+Package: phtourismrecovery
+Title: Has Philippine Tourism Recovered? Forecasting Visitor Arrivals After COVID-19
+Version: 0.1.0
+Description: Reproducible targets pipeline and Quarto dashboard that model the
+    COVID-19 structural break in monthly Philippine visitor arrivals
+    (Department of Tourism, 2010 onward) and forecast when arrivals pass
+    their 2019 level. This file only lists dependencies; the project is not
+    an R package.
+License: MIT
+Encoding: UTF-8
+Imports:
+    CausalImpact,
+    dplyr,
+    fable,
+    fable.prophet,
+    fabletools,
+    feasts,
+    ggplot2,
+    jsonlite,
+    lubridate,
+    plotly (>= 4.11.0),
+    purrr,
+    quarto,
+    readr,
+    rvest,
+    scales,
+    stringr,
+    tarchetypes,
+    targets,
+    tibble,
+    tidyr,
+    tsibble,
+    urca,
+    xml2
