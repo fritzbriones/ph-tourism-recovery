@@ -91,7 +91,7 @@ list(icon = "graph-up-arrow", color = "info", value = value)
 ### Recovery gap {width="50%"}
 
 ```{r}
-#| title: !expr 'sprintf("Actual vs no-COVID counterfactual. Visitors lost since Mar 2020: about %s (95%% interval %s to %s)", millions(gap$deficit_median), millions(gap$deficit_lo95), millions(gap$deficit_hi95))'
+#| title: !expr 'sprintf("Actual vs no-COVID counterfactual (dashed line = median, band = 95%%). Visitors lost since Mar 2020: about %s (95%% interval %s to %s)", millions(gap$deficit_median), millions(gap$deficit_lo95), millions(gap$deficit_hi95))'
 cf <- tar_read(cf_summary) |> mutate(date = as.Date(date))
 p <- ggplot() +
   geom_ribbon(data = cf, aes(as.Date(date), ymin = lo95, ymax = hi95), fill = cf_col, alpha = 0.25) +
@@ -108,7 +108,7 @@ tidy_plotly(p)
 ### Model comparison {width="50%"}
 
 ```{r}
-#| title: "Three forecasts to 2030: naive Prophet, intervention ARIMA, and the headline post-reopening ARIMA (green), which wins the 12-month hold-out test. 80%/95% intervals, clipped at 2x the record month"
+#| title: "Three forecasts to 2030: naive Prophet, intervention ARIMA, and the headline post-reopening ARIMA (green), which wins the 12-month hold-out test. Lines are median forecasts; bands are 80%/95% intervals, clipped at 2x the record month"
 # The naive model's intervals explode; clip all bands at 2x the record month
 # so the three panels stay readable (stated in the title)
 cap <- 2 * max(hist_df$arrivals, na.rm = TRUE)

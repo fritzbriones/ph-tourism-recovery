@@ -4,6 +4,7 @@ last month,2026 Aug,TRUE
 months in series,200,TRUE
 missing months,none,TRUE
 months DOT did not collect (kept as NA),2022 Jan,TRUE
+missing months inside the latest year (would distort year-to-date KPIs),none,TRUE
 duplicate year-month-market rows,0,TRUE
 negative values,0,TRUE
 months where total row differs from sum of markets by > 0.5%,none,TRUE

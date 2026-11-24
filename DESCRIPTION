@@ -22,7 +22,6 @@ Imports:
     purrr,
     quarto,
     readr,
-    rvest,
     scales,
     stringr,
     tarchetypes,
@@ -31,5 +30,7 @@ Imports:
     tidyr,
     tsibble,
     urca,
-    xml2,
     zoo
+Suggests:
+    rvest,
+    xml2
