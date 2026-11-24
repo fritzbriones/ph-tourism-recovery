@@ -5,7 +5,11 @@
 #   2. Naive forecast: Prophet on the full series with no knowledge of COVID.
 #      Shown on purpose, to demonstrate how the 2020-21 crash distorts it.
 #   3. Intervention ARIMA (ARIMAX): log arrivals with regressors for the
-#      border closure and a decaying post-reopening gap.
+#      border closure and a decaying post-reopening gap. Used to MEASURE the
+#      shock (interrupted time series).
+#   3b. Post-reopening ARIMA: fitted on Jan 2023 onward only (the new normal
+#      after the recovery ramp). Used for the headline FORECAST because it
+#      wins the 12-month hold-out test by a wide margin.
 #   4. CausalImpact (Bayesian structural time series) as a cross-check of the
 #      counterfactual.
 # All models work on log(arrivals): seasonality is multiplicative and
@@ -15,6 +19,7 @@
 CLOSE_START <- tsibble::yearmonth("2020 Mar")  # lockdown and border closure
 REOPEN      <- tsibble::yearmonth("2022 Feb")  # reopened to tourists 10 Feb 2022
 HORIZON_END <- tsibble::yearmonth("2030 Dec")
+RECENT_START <- tsibble::yearmonth("2023 Jan") # first full year after reopening
 TAU_GRID    <- c(3, 6, 9, 12, 18, 24, 36)       # months; speed of gap decay
 N_SIMS      <- 1000
 
@@ -22,6 +27,20 @@ as_arrivals_ts <- function(totals) {
   totals |>
     dplyr::select(date, arrivals) |>
     tsibble::as_tsibble(index = date)
+}
+
+# ARIMA cannot fit through a missing month here (Jan 2022, not collected by
+# DOT). For the intervention model only, a missing month is filled by
+# log-linear interpolation between its neighbours. Published data keeps NA.
+fill_gaps_log <- function(ts) {
+  y <- log(ts$arrivals)
+  miss <- is.na(y)
+  if (any(miss)) {
+    y[miss] <- stats::approx(which(!miss), y[!miss], xout = which(miss))$y
+    ts$arrivals <- exp(y)
+  }
+  attr(ts, "filled") <- format(ts$date[miss])
+  ts
 }
 
 # Intervention regressors. Values for future months are known in advance,
@@ -123,17 +142,23 @@ fit_naive <- function(ts) {
 # ---- 3. Intervention ARIMA ---------------------------------------------------
 
 fit_intervention <- function(ts) {
+  ts <- fill_gaps_log(ts)
   fits <- purrr::map(TAU_GRID, function(tau) {
     add_interventions(ts, tau) |>
       fabletools::model(
         `Intervention ARIMA` = fable::ARIMA(log(arrivals) ~ closed + mar2020 + post + gap_decay)
       )
   })
-  aicc <- purrr::map_dbl(fits, ~ fabletools::glance(.x)$AICc)
+  aicc <- purrr::map_dbl(fits, function(f) {
+    g <- fabletools::glance(f)
+    if ("AICc" %in% names(g)) g$AICc else Inf
+  })
+  if (all(!is.finite(aicc))) stop("Intervention ARIMA could not be fitted for any tau.")
   best <- which.min(aicc)
   fit <- fits[[best]]
   attr(fit, "tau") <- TAU_GRID[best]
   attr(fit, "tau_table") <- tibble::tibble(tau_months = TAU_GRID, AICc = aicc)
+  attr(fit, "filled") <- attr(ts, "filled")
   fit
 }
 
@@ -151,6 +176,21 @@ forecast_model <- function(fit, ts) {
     dplyr::transmute(model = .model, date, median = stats::median(arrivals),
                      mean = .mean, lo80 = i80_lower, hi80 = i80_upper,
                      lo95 = i95_lower, hi95 = i95_upper)
+}
+
+# ---- 3b. Post-reopening ARIMA ------------------------------------------------
+
+recent_spec <- function() fable::ARIMA(log(arrivals))
+
+fit_recent <- function(ts) {
+  ts |> dplyr::filter(date >= RECENT_START) |>
+    fabletools::model(`Post-reopening ARIMA` = recent_spec())
+}
+
+model_paths <- function(fit, ts) {
+  fabletools::generate(fit, new_data = future_months(ts), times = N_SIMS, bootstrap = FALSE) |>
+    tibble::as_tibble() |>
+    dplyr::select(date, rep = .rep, sim = .sim)
 }
 
 intervention_paths <- function(fit, ts) {
@@ -174,9 +214,15 @@ holdout_accuracy <- function(ts, h = 12) {
   new <- add_interventions(test_dates, attr(inter, "tau")) |> dplyr::select(-arrivals)
   fc_inter <- fabletools::forecast(inter, new_data = new)
 
+  recent <- train |> dplyr::filter(date >= RECENT_START) |>
+    fabletools::model(`Post-reopening ARIMA` = recent_spec(),
+                      `Seasonal naive (benchmark)` = fable::SNAIVE(arrivals))
+  fc_recent <- fabletools::forecast(recent, h = h)
+
   dplyr::bind_rows(
     fabletools::accuracy(fc_naive, ts),
-    fabletools::accuracy(fc_inter, add_interventions(ts, attr(inter, "tau")))
+    fabletools::accuracy(fc_inter, add_interventions(fill_gaps_log(ts), attr(inter, "tau"))),
+    fabletools::accuracy(fc_recent, ts)
   ) |>
     dplyr::select(model = .model, RMSE, MAE, MAPE, MASE) |>
     dplyr::mutate(test_window = paste(format(cutoff + 1), "to", format(max(ts$date))))
@@ -184,8 +230,10 @@ holdout_accuracy <- function(ts, h = 12) {
 
 residual_checks <- function(fit) {
   aug <- fabletools::augment(fit)
-  lb <- aug |> fabletools::features(.innov, feasts::ljung_box, lag = 24,
-                                    dof = length(stats::coef(fit[[1]][[1]]$fit$model)))
+  n_coef <- nrow(fabletools::tidy(fit))
+  lag <- min(24, floor(nrow(aug) / 3))
+  lb <- aug |> fabletools::features(.innov, feasts::ljung_box, lag = lag, dof = n_coef) |>
+    dplyr::mutate(lag = lag)
   list(augment = tibble::as_tibble(aug), ljung_box = lb,
        report = utils::capture.output(fabletools::report(fit)))
 }

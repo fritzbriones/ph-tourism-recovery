@@ -61,12 +61,18 @@ list(
   tar_target(inter_fc, forecast_model(inter_fit, arrivals_ts)),
   tar_target(inter_paths, intervention_paths(inter_fit, arrivals_ts)),
   tar_target(inter_resid, residual_checks(inter_fit)),
+
+  tar_target(recent_fit, fit_recent(arrivals_ts)),
+  tar_target(recent_fc, forecast_model(recent_fit, arrivals_ts)),
+  tar_target(recent_paths, model_paths(recent_fit, arrivals_ts)),
+  tar_target(recent_resid, residual_checks(recent_fit)),
   tar_target(holdout, holdout_accuracy(arrivals_ts)),
   tar_target(causal, run_causalimpact(arrivals_ts)),
 
   # ---- Recovery metrics ------------------------------------------------------
   tar_target(kpis, recovery_kpis(totals)),
-  tar_target(crossing, crossing_date(inter_paths, totals)),
+  tar_target(crossing, crossing_date(recent_paths, totals)),
+  tar_target(crossing_inter, crossing_date(inter_paths, totals)),
   tar_target(market_rec, market_recovery(markets)),
   tar_target(seasonal, seasonal_profile(totals)),
 

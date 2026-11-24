@@ -43,9 +43,9 @@ tar_read(cv_pre) |> mutate(across(where(is.numeric), ~ round(.x, 3)))
 
 The model with the lowest MASE (excluding the seasonal naive benchmark) is used: **`r attr(tar_read(cf_fit), "chosen")`** on log arrivals. The dashboard's recovery gap is the sum of (counterfactual − actual) from March 2020 to the latest month, computed across `r tar_read(cf_paths)$rep |> n_distinct()` simulated counterfactual paths, so it has an uncertainty interval.
 
-## Intervention model (ARIMAX)
+## Measuring the shock: intervention model (ARIMAX)
 
-A regression with ARIMA errors on log arrivals, with four intervention terms:
+An interrupted time-series model: a regression with ARIMA errors on log arrivals, fitted to the whole series, with four intervention terms:
 
 | Term | Definition | Captures |
 |---|---|---|
@@ -54,7 +54,7 @@ A regression with ARIMA errors on log arrivals, with four intervention terms:
 | `post` | 1 from February 2022 onward | Any lasting level shift after reopening |
 | `gap_decay` | exp(−months since Feb 2022 / τ) from February 2022 | Post-reopening gap that shrinks over time |
 
-All four are known for future months, so forecasting needs no guessed inputs. The decay speed τ was chosen by AICc:
+All four are known for future months, so the model can also forecast. January 2022 was not collected by DOT; for this model only it is filled by log-linear interpolation between December 2021 and February 2022 (`r paste(attr(tar_read(inter_fit), "filled"), collapse = ", ")`). The decay speed τ was chosen by AICc:
 
 ```{r}
 attr(tar_read(inter_fit), "tau_table") |> mutate(AICc = round(AICc, 1),
@@ -66,41 +66,73 @@ attr(tar_read(inter_fit), "tau_table") |> mutate(AICc = round(AICc, 1),
 cat(tar_read(inter_resid)$report, sep = "\n")
 ```
 
+```{r}
+co <- fabletools::tidy(tar_read(inter_fit))
+eff <- function(term) {
+  b <- co$estimate[co$term == term]; se <- co$std.error[co$term == term]
+  sprintf("%s%% (95%% CI %s%% to %s%%)", round(100 * (exp(b) - 1), 1),
+          round(100 * (exp(b - 1.96 * se) - 1), 1), round(100 * (exp(b + 1.96 * se) - 1), 1))
+}
+```
+
+**Size of the shock.** While the borders were closed, arrivals were `r eff("closed")` relative to the level the model expects without the closure. The partial month of March 2020 was `r eff("mar2020")`.
+
+## Forecasting: which model to trust?
+
+Three forecasting approaches were compared on the same 12-month hold-out:
+
+- **Naive Prophet**: the full series, with no knowledge of COVID.
+- **Intervention ARIMA**: the model above, which carries forward the long-run 2010–2019 growth rate.
+- **Post-reopening ARIMA**: an automatically selected ARIMA on log arrivals, fitted only to January 2023 onward, after the recovery ramp. A seasonal naive forecast (same month last year) is the benchmark.
+
 ### Hold-out test: last 12 months
 
-Both forecasting models were refit without the last 12 months and scored on them:
+Every model was refit without the last 12 months and scored on them:
 
 ```{r}
-tar_read(holdout) |> mutate(across(where(is.numeric), ~ round(.x, 3)))
+tar_read(holdout) |> mutate(across(where(is.numeric), ~ round(.x, 3))) |> arrange(MAPE)
+```
+
+The dashboard's headline forecast uses the **post-reopening ARIMA**. The intervention model assumes arrivals return to their pre-COVID growth rate; the hold-out test says that assumption has not held since 2023, so its forecast is shown for comparison only.
+
+```{r}
+#| class-output: model-report
+cat(tar_read(recent_resid)$report, sep = "\n")
 ```
 
 ### Residual diagnostics
 
 ```{r}
-lb <- tar_read(inter_resid)$ljung_box
+bind_rows(tar_read(inter_resid)$ljung_box, tar_read(recent_resid)$ljung_box) |>
+  transmute(model = .model, lags = lag, `Ljung-Box statistic` = round(lb_stat, 1),
+            `p-value` = format.pval(lb_pvalue, digits = 2))
 ```
 
-Ljung–Box test on the innovation residuals (24 lags): statistic `r num(lb$lb_stat, 1)`, p-value `r format.pval(lb$lb_pvalue, digits = 2)`. A p-value above 0.05 means no evidence of leftover autocorrelation.
+A p-value above 0.05 means no evidence of leftover autocorrelation. The intervention model fails this test: its residuals still have structure (the 2020–2022 period is hard to model as a few step changes), which is one more reason not to use it for the forecast.
 
 ```{r}
 #| fig-height: 3.5
-aug <- tar_read(inter_resid)$augment
+aug <- tar_read(recent_resid)$augment
 acf_df <- with(stats::acf(aug$.innov, lag.max = 36, plot = FALSE, na.action = na.pass),
                tibble(lag = lag[-1], acf = acf[-1]))
 conf <- 1.96 / sqrt(sum(!is.na(aug$.innov)))
 ggplot(acf_df, aes(lag, acf)) + geom_hline(yintercept = 0) +
   geom_hline(yintercept = c(-conf, conf), linetype = "dashed", colour = "#2563eb") +
   geom_segment(aes(xend = lag, yend = 0)) +
-  labs(x = "Lag (months)", y = "ACF", title = "Autocorrelation of residuals") + theme_minimal()
+  labs(x = "Lag (months)", y = "ACF", title = "Autocorrelation of residuals, post-reopening ARIMA") + theme_minimal()
 ```
 
 ## When will arrivals pass 2019?
 
-Cumulative arrivals since 2020 can never catch up with the no-COVID path, so the target is the **rolling 12-month total** passing the **2019 calendar-year total** (`r num(tar_read(crossing)$target_2019_total, 0)`). This is checked on each of the simulated future paths of the intervention model:
+Cumulative arrivals since 2020 can never catch up with the no-COVID path, so the target is the **rolling 12-month total** passing the **2019 calendar-year total** (`r num(tar_read(crossing)$target_2019_total, 0)`). This is checked on each of `r num(N_SIMS <- 1000, 0)` simulated future paths:
 
 ```{r}
-tar_read(crossing)
+bind_rows(`Post-reopening ARIMA (headline)` = tar_read(crossing),
+          `Intervention ARIMA (sensitivity)` = tar_read(crossing_inter), .id = "model") |>
+  mutate(prob_by_horizon = scales::percent(prob_by_horizon, 1))
 ```
+
+`median_month` is shown only when at least half the paths pass 2019 by the horizon; `p90_month` only when at least 90% do.
 
 ## Cross-check: Bayesian structural time series
 
@@ -125,4 +157,6 @@ if (is.null(bsts_ci)) {
 
 - No covariates: the counterfactual assumes the 2010–2019 trend would have continued. Exchange rates, airline capacity, the Boracay closure (April–October 2018) and visa policy aren't modelled.
 - The classification change in 2022 affects source market comparisons, not the national total.
+- The post-reopening model has only a few years of data (2023 onward), so its intervals widen quickly beyond 2027.
+- 2022 figures come from a different system (One Health Pass) than 2010–2021 (arrival cards) and 2023 onward (Bureau of Immigration and eTravel).
 - Forecast intervals assume the post-reopening pattern continues; a new shock would break them.
