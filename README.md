@@ -58,7 +58,8 @@ The pipeline stops if a month is missing, a row is duplicated or a value is nega
 ## Reproduce
 
 ```r
-# 1. Install the packages listed in DESCRIPTION, or restore renv.lock if present
+# 1. Install the packages listed in DESCRIPTION
+#    (rvest and xml2 are only needed for the optional R/download.R helper)
 install.packages(c("targets", "tarchetypes", "fable", "fable.prophet", "fabletools",
                    "feasts", "tsibble", "CausalImpact", "plotly", "quarto",
                    "tidyverse", "jsonlite", "urca"))

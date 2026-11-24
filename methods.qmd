@@ -41,7 +41,7 @@ The counterfactual model is trained only on January 2010 – February 2020 and p
 tar_read(cv_pre) |> mutate(across(where(is.numeric), ~ round(.x, 3)))
 ```
 
-The model with the lowest MASE (excluding the seasonal naive benchmark) is used: **`r attr(tar_read(cf_fit), "chosen")`** on log arrivals. The dashboard's recovery gap is the sum of (counterfactual − actual) from March 2020 to the latest month, computed across `r tar_read(cf_paths)$rep |> n_distinct()` simulated counterfactual paths, so it has an uncertainty interval.
+Seasonal naive (each month = the same month a year earlier) is the benchmark: MASE is scaled against it, and a model is only worth using if it beats it. Here both ARIMA and ETS do, so the one with the lowest MASE is used: **`r attr(tar_read(cf_fit), "chosen")`** on log arrivals. The dashboard's recovery gap is the sum of (counterfactual − actual) from March 2020 to the latest month, computed across `r tar_read(cf_paths)$rep |> n_distinct()` simulated counterfactual paths, so it has an uncertainty interval.
 
 ## Measuring the shock: intervention model (ARIMAX)
 

@@ -17,6 +17,11 @@ validate_dot <- function(markets, totals, tolerance = 0.005) {
     dplyr::mutate(rel_diff = abs(total_row - market_sum) / total_row) |>
     dplyr::filter(rel_diff > tolerance)
 
+  # The headline KPIs compare Jan..latest month of the latest year with 2019:
+  # a gap inside the latest year would silently undercount them
+  latest_year <- max(totals$year)
+  gaps_latest <- totals |> dplyr::filter(year == latest_year, is.na(arrivals))
+
   # Each file's monthly totals must add up to the annual total it reports
   annual <- markets |>
     dplyr::filter(is_total, !is.na(annual_reported)) |>
@@ -33,6 +38,9 @@ validate_dot <- function(markets, totals, tolerance = 0.005) {
     "missing months", if (length(missing)) paste(missing, collapse = "; ") else "none", length(missing) == 0,
     "months DOT did not collect (kept as NA)",
       if (any(totals$not_reported)) paste(format(totals$date[totals$not_reported]), collapse = "; ") else "none", TRUE,
+    "missing months inside the latest year (would distort year-to-date KPIs)",
+      if (nrow(gaps_latest)) paste(format(gaps_latest$date), collapse = "; ") else "none",
+      nrow(gaps_latest) == 0,
     "duplicate year-month-market rows", as.character(nrow(dup)), nrow(dup) == 0,
     "negative values", as.character(nrow(neg)), nrow(neg) == 0,
     "months where total row differs from sum of markets by > 0.5%",
