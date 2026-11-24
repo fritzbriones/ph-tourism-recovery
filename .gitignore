@@ -1,0 +1,13 @@
+_targets/
+_site/
+.quarto/
+*_files/
+index.html
+methods.html
+.Rhistory
+.RData
+.Rproj.user/
+renv/library/
+renv/staging/
+
+/.quarto/

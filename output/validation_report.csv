@@ -1,0 +1,11 @@
+check,result,pass
+first month,2010 Jan,TRUE
+last month,2026 Aug,TRUE
+months in series,200,TRUE
+missing months,none,TRUE
+months DOT did not collect (kept as NA),2022 Jan,TRUE
+duplicate year-month-market rows,0,TRUE
+negative values,0,TRUE
+months where total row differs from sum of markets by > 0.5%,none,TRUE
+years where monthly totals don't add up to the file's annual total,none,TRUE
+classification switch (residence -> citizenship),2022-01,TRUE
