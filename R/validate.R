@@ -17,6 +17,14 @@ validate_dot <- function(markets, totals, tolerance = 0.005) {
     dplyr::mutate(rel_diff = abs(total_row - market_sum) / total_row) |>
     dplyr::filter(rel_diff > tolerance)
 
+  # Each file's monthly totals must add up to the annual total it reports
+  annual <- markets |>
+    dplyr::filter(is_total, !is.na(annual_reported)) |>
+    dplyr::group_by(year) |>
+    dplyr::summarise(sum_months = sum(arrivals), reported = dplyr::first(annual_reported),
+                     .groups = "drop") |>
+    dplyr::filter(sum_months != reported)
+
   report <- tibble::tribble(
     ~check, ~result, ~pass,
     "first month", format(min(totals$date)), TRUE,
@@ -27,6 +35,8 @@ validate_dot <- function(markets, totals, tolerance = 0.005) {
     "negative values", as.character(nrow(neg)), nrow(neg) == 0,
     "months where total row differs from sum of markets by > 0.5%",
       if (nrow(gap)) paste(format(gap$date), collapse = "; ") else "none", TRUE,
+    "years where monthly totals don't add up to the file's annual total",
+      if (nrow(annual)) paste(annual$year, collapse = "; ") else "none", nrow(annual) == 0,
     "classification switch (residence -> citizenship)",
       paste0(CITIZENSHIP_FROM, "-01"), TRUE
   )

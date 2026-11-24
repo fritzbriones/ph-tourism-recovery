@@ -35,10 +35,14 @@ list(
     validation
     write_csv_file(
       markets |> dplyr::filter(!is_total) |>
-        dplyr::select(year, month, market, arrivals, classification, file),
+        dplyr::select(year, month, market, dplyr::any_of("market_raw"), is_nrf,
+                      arrivals, classification, file),
       if (using_placeholder) "data/placeholder/arrivals_by_market_SYNTHETIC.csv"
       else "data/dot_arrivals_by_market.csv")
   }, format = "file"),
+  tar_target(unmatched, unmatched_markets(markets)),
+  tar_target(unmatched_csv, write_csv_file(unmatched, "output/unmatched_markets.csv"),
+             format = "file"),
   tar_target(validation_csv, write_csv_file(validation, "output/validation_report.csv"),
              format = "file"),
 

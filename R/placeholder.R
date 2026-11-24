@@ -49,6 +49,8 @@ make_placeholder <- function(end = "2026-08", seed = 2026) {
   dplyr::bind_rows(by_market |> dplyr::select(year, month, market, arrivals), totals) |>
     dplyr::mutate(
       is_total = market == "Grand Total",
+      is_nrf = FALSE,
+      annual_reported = NA_real_,
       file = "SYNTHETIC placeholder",
       classification = ifelse(year >= 2022, "citizenship", "residence")
     )

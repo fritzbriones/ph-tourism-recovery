@@ -55,7 +55,7 @@ crossing_date <- function(paths, totals) {
 # Source markets: latest year-to-date vs the same months of 2019.
 # Caveat: 2019 counts are by country of RESIDENCE, 2022+ by CITIZENSHIP.
 market_recovery <- function(markets, top_n = 10) {
-  m <- dplyr::filter(markets, !is_total)
+  m <- dplyr::filter(markets, !is_total, !is_nrf)
   ly <- max(m$year)
   lm <- max(m$month[m$year == ly & m$arrivals > 0])
   ytd <- m |>
@@ -71,6 +71,7 @@ market_recovery <- function(markets, top_n = 10) {
     dplyr::mutate(latest = dplyr::coalesce(latest, 0),
                   recovery = latest / base,
                   period = paste0("Jan-", month.abb[lm], " ", ly, " vs ", BASE_YEAR)) |>
+    dplyr::mutate(market = tools::toTitleCase(tolower(market))) |>
     dplyr::arrange(dplyr::desc(recovery))
 }
 

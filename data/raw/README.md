@@ -4,7 +4,7 @@ Put the Department of Tourism yearly files here, unchanged, as downloaded from
 the **Datasets used in this dashboard** section of
 <https://www.tourism.gov.ph/dot/data/>.
 
-- One file per year, 2010 to the latest year. CSV preferred; JSON also works.
+- One CSV per year, 2010 to the latest year (17 files as of Aug 2026). Leave out the "Outbound" files.
 - Keep the year in the file name (for example `2019_monthly_visitor_arrivals.csv`);
   the pipeline reads the year from it when the file has no year column.
 - Don't edit the numbers by hand. Any fixes belong in `R/ingest.R`, so they're

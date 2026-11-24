@@ -142,7 +142,7 @@ ggplotly(p)
 ### Source markets {width="50%"}
 
 ```{r}
-#| title: "Top 10 markets of 2019: arrivals as a share of 2019 (2019 by residence, 2022+ by citizenship)"
+#| title: "Top 10 markets of 2019: arrivals as a share of 2019 (2019 by residence and includes non-resident Filipinos; 2022+ by citizenship, excludes them)"
 mr <- tar_read(market_rec)
 p <- ggplot(mr, aes(recovery, reorder(market, recovery),
                     text = paste0(market, ": ", comma(latest), " vs ", comma(base), " (", pct(recovery), ")"))) +

@@ -1,130 +1,121 @@
 # ==============================================================================
-# Ingestion: read the yearly DOT files (CSV or JSON) from data/raw/ and bind
-# them into one tidy monthly table: one row per year x month x market.
+# Ingestion: read the yearly DOT files from data/raw/ and bind them into one
+# tidy table, one row per year x month x market.
 #
 # Source: Department of Tourism, Philippine Tourism Data Dashboard
-#   https://www.tourism.gov.ph/dot/data/  ("Datasets used in this dashboard")
-#   2010-2021 files: arrivals by COUNTRY OF RESIDENCE
-#   2022-2026 files: arrivals by COUNTRY OF CITIZENSHIP
+#   https://www.tourism.gov.ph/dot/statistics/
+#   "<YEAR> Monthly Visitor Arrivals by Country of Residence"    (2010-2021)
+#   "<YEAR> Monthly Visitor Arrivals by Country of Citizenship"  (2022 onward)
 #
-# The parser accepts both common layouts:
-#   wide  - one row per market, one column per month (Jan ... Dec)
-#   long  - one row per market and month, with a month column
-# Rows named "Total" / "Grand Total" are kept but flagged, so the validation
-# step can check them against the sum of the markets.
+# Layout of every file (checked on the 2019, 2024 and 2026 files):
+#   rows 1-3  title block, e.g. "JANUARY TO DECEMBER 2024"
+#   row 4     header: RANK, SOURCE MARKET, JANUARY ... DECEMBER,
+#             "JANUARY-DECEMBER <year>" (annual volume), % share, growth,
+#             previous year's volume
+#   row 5     sub-header (Volume / % Share / Growth Rate)
+#   then      a total row, one row per market, and notes at the bottom
+#
+# Differences between years that this reader handles:
+#   - The total row is "TOTAL" in the RANK column (2019, 2024) or
+#     "GRAND TOTAL" in the SOURCE MARKET column (2026).
+#   - 2026 adds a "TOTAL FOREIGN" subtotal (grand total minus non-resident
+#     Filipinos). It is dropped so nothing is counted twice.
+#   - From 2022, non-resident Filipinos are a separate row (RANK "#").
+#     Up to 2021 they are inside each country of residence.
+#   - Numbers have thousands separators; " - " means zero, except in months
+#     not yet reported in a partial year, where every row is " - ".
+#   - Market names change between files (e.g. "CHINA" vs "CHINA, PEOPLE'S
+#     REPUBLIC OF"); see R/markets.R.
 # ==============================================================================
 
-MONTH_KEYS <- c("jan", "feb", "mar", "apr", "may", "jun",
-                "jul", "aug", "sep", "oct", "nov", "dec")
+MONTH_NAMES <- toupper(month.name)
 
 # First year classified by country of citizenship instead of residence
 CITIZENSHIP_FROM <- 2022L
 
 list_raw_files <- function(dir = "data/raw") {
-  files <- list.files(dir, pattern = "\\.(csv|json)$", full.names = TRUE,
-                      ignore.case = TRUE)
-  # The same DOT archive also has "Outbound Philippine Residents" files:
-  # those count Filipinos leaving, not visitors arriving, so never mix them in
+  files <- list.files(dir, pattern = "\\.csv$", full.names = TRUE, ignore.case = TRUE)
+  # The DOT archive also has "Outbound Philippine Residents" files:
+  # those count Filipinos leaving, not visitors arriving
   outbound <- grepl("outbound|destination", basename(files), ignore.case = TRUE)
   if (any(outbound)) {
     warning("Ignoring outbound files: ", paste(basename(files[outbound]), collapse = ", "))
-    files <- files[!outbound]
   }
-  # If a year has both a CSV and a JSON copy, keep the CSV only
-  key <- sub("\\.(csv|json)$", "", basename(files), ignore.case = TRUE)
-  files[!(duplicated(key) & grepl("json$", files, ignore.case = TRUE))]
+  files[!outbound]
 }
 
 to_number <- function(x) {
-  x <- gsub("[^0-9.-]", "", as.character(x))
-  suppressWarnings(as.numeric(ifelse(x %in% c("", "-", "."), NA, x)))
-}
-
-month_index <- function(x) {
-  key <- substr(tolower(trimws(x)), 1, 3)
-  out <- match(key, MONTH_KEYS)
-  num <- suppressWarnings(as.integer(x))
-  ifelse(is.na(out), num, out)
-}
-
-clean_names <- function(df) {
-  names(df) <- tolower(gsub("[^A-Za-z0-9]+", "_", trimws(names(df))))
-  names(df) <- gsub("^_|_$", "", names(df))
-  df
-}
-
-read_raw <- function(path) {
-  if (grepl("json$", path, ignore.case = TRUE)) {
-    x <- jsonlite::fromJSON(path, flatten = TRUE)
-    # Some APIs wrap the rows, e.g. {"data": [...]}
-    if (is.list(x) && !is.data.frame(x)) x <- x[[which(vapply(x, is.data.frame, TRUE))[1]]]
-    df <- tibble::as_tibble(lapply(x, as.character))
-  } else {
-    df <- readr::read_csv(path, col_types = readr::cols(.default = "c"),
-                          show_col_types = FALSE, name_repair = "unique")
-  }
-  clean_names(df)
+  x <- trimws(as.character(x))
+  dash <- x %in% c("-", "")
+  out <- suppressWarnings(as.numeric(gsub("[^0-9.]", "", x)))
+  out[dash] <- 0
+  out
 }
 
 read_dot_file <- function(path) {
-  df <- read_raw(path)
-  file_year <- as.integer(stringr::str_extract(basename(path), "20[0-9]{2}"))
+  lines <- readr::read_lines(path, n_max = 10)
+  header_row <- grep("SOURCE MARKET", lines, ignore.case = TRUE)[1]
+  if (is.na(header_row)) stop("No 'SOURCE MARKET' header found in ", basename(path))
 
-  month_cols <- names(df)[substr(names(df), 1, 3) %in% MONTH_KEYS &
-                            nchar(names(df)) <= 9]
-  is_wide <- length(month_cols) >= 1 && !"month" %in% names(df)
+  # Year: from the title ("JANUARY TO DECEMBER 2024"), else from the file name
+  title_year <- stringr::str_extract(paste(lines[seq_len(header_row - 1)], collapse = " "),
+                                     "(19|20)[0-9]{2}")
+  year <- as.integer(dplyr::coalesce(title_year,
+                                     stringr::str_extract(basename(path), "20[0-9]{2}")))
 
-  label_col <- names(df)[grepl("country|market|residence|citizenship|nationality|region",
-                               names(df))][1]
-  if (is.na(label_col)) label_col <- setdiff(names(df), c(month_cols, "year"))[1]
+  raw <- readr::read_csv(path, skip = header_row - 1, col_types = readr::cols(.default = "c"),
+                         col_names = TRUE, name_repair = "minimal", show_col_types = FALSE)
+  hdr <- toupper(trimws(names(raw)))
+  month_cols <- match(MONTH_NAMES, hdr)
+  if (anyNA(month_cols)) stop("Month columns missing in ", basename(path))
+  annual_col <- grep("^JANUARY\\s*-\\s*[A-Z]+\\s+[0-9]{4}$", hdr)[1]
 
-  if (is_wide) {
-    long <- df |>
-      dplyr::select(market = dplyr::all_of(label_col),
-                    dplyr::any_of("year"), dplyr::all_of(month_cols)) |>
-      tidyr::pivot_longer(dplyr::all_of(month_cols),
-                          names_to = "month", values_to = "arrivals")
-  } else {
-    value_col <- names(df)[grepl("arrival|visitor|count|value|total", names(df)) &
-                             names(df) != label_col][1]
-    if (is.na(value_col) || !"month" %in% names(df)) {
-      stop("Unrecognised layout in ", basename(path),
-           ". Columns: ", paste(names(df), collapse = ", "))
-    }
-    long <- df |>
-      dplyr::select(market = dplyr::all_of(label_col), dplyr::any_of("year"),
-                    month, arrivals = dplyr::all_of(value_col))
-  }
+  rank <- trimws(raw[[1]])
+  market <- stringr::str_squish(raw[[2]])
+  market <- ifelse(is.na(market) | market == "",
+                   ifelse(toupper(rank) == "TOTAL", "TOTAL", NA), market)
+  keep <- !is.na(market) & toupper(market) != "TOTAL FOREIGN"
 
-  if (!"year" %in% names(long)) long$year <- file_year
+  # Months with " - " in the total row are not reported yet (partial year)
+  total_idx <- which(toupper(market) %in% c("TOTAL", "GRAND TOTAL"))[1]
+  if (is.na(total_idx)) stop("No total row found in ", basename(path))
+  total_raw <- trimws(unlist(raw[total_idx, month_cols]))
+  reported <- !total_raw %in% c("-", "", NA)
 
-  long |>
+  wide <- raw[keep, month_cols[reported], drop = FALSE]
+  names(wide) <- as.character(which(reported))
+  wide$market <- market[keep]
+  wide$annual_reported <- if (is.na(annual_col)) NA_real_ else to_number(raw[[annual_col]][keep])
+
+  wide |>
+    tidyr::pivot_longer(-c(market, annual_reported), names_to = "month", values_to = "arrivals") |>
     dplyr::transmute(
-      year = as.integer(to_number(year)),
-      month = month_index(month),
-      market = stringr::str_squish(market),
+      year = year,
+      month = as.integer(month),
+      market,
       arrivals = to_number(arrivals),
-      is_total = grepl("^(grand\\s*)?total", market, ignore.case = TRUE),
+      is_total = toupper(market) %in% c("TOTAL", "GRAND TOTAL"),
+      is_nrf = grepl("NON-RESIDENT FILIPINO", market, ignore.case = TRUE),
+      annual_reported,
+      classification = ifelse(year >= CITIZENSHIP_FROM, "citizenship", "residence"),
       file = basename(path)
-    ) |>
-    dplyr::filter(!is.na(month), !is.na(market), market != "") |>
-    dplyr::mutate(classification = ifelse(year >= CITIZENSHIP_FROM,
-                                          "citizenship", "residence"))
+    )
 }
 
 ingest_dot <- function(files) {
   if (!length(files)) stop("No files given to ingest_dot().")
-  purrr::map(files, read_dot_file) |> purrr::list_rbind()
+  purrr::map(files, read_dot_file) |> purrr::list_rbind() |> harmonise_markets()
 }
 
-# One row per month: the file's own Total row when present, else the sum of
-# its markets. `total_source` records which was used.
+# One row per month: the file's own total row, with the sum of the market
+# rows (including non-resident Filipinos) kept alongside for validation.
 monthly_total <- function(markets) {
   markets |>
     dplyr::group_by(year, month, classification) |>
     dplyr::summarise(
-      total_row = if (any(is_total)) sum(arrivals[is_total], na.rm = TRUE) else NA_real_,
+      total_row = if (any(is_total)) sum(arrivals[is_total]) else NA_real_,
       market_sum = sum(arrivals[!is_total], na.rm = TRUE),
+      nrf = sum(arrivals[is_nrf], na.rm = TRUE),
       .groups = "drop"
     ) |>
     dplyr::mutate(
@@ -132,8 +123,5 @@ monthly_total <- function(markets) {
       total_source = ifelse(is.na(total_row), "sum of markets", "file total row"),
       date = tsibble::yearmonth(sprintf("%d-%02d", year, month))
     ) |>
-    dplyr::filter(!is.na(arrivals)) |>
-    dplyr::arrange(date) |>
-    # A partial year can list future months as 0: drop zeros at the very end
-    dplyr::filter(dplyr::row_number() <= max(which(arrivals > 0)))
+    dplyr::arrange(date)
 }
